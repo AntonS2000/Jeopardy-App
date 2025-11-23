@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Вход</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
+</head>
+<body class="container mt-5">
+  <h1 class="text-center">Авторизация</h1>
+  {% with messages = get_flashed_messages() %}
+    {% if messages %}
+      <div class="alert alert-danger mt-3">{{ messages[0] }}</div>
+    {% endif %}
+  {% endwith %}
+  <form method="POST" class="mt-4">
+    <div class="mb-3">
+      <label class="form-label">Роль</label>
+      <select name="role" class="form-select" required>
+        <option value="">Выберите роль...</option>
+        <option value="Администратор" {% if request.form.role == 'Администратор' %}selected{% endif %}>Администратор</option>
+        <option value="Игрок" {% if request.form.role == 'Игрок' %}selected{% endif %}>Игрок</option>
+      </select>
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Логин</label>
+      <input type="text" name="login" class="form-control" value="{{ request.form.login or '' }}" placeholder="Admin / Имя игрока">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Пароль</label>
+      <input type="password" name="password" class="form-control" value="{{ request.form.password or '' }}" placeholder="Administrator / 11111, 22222, 33333">
+    </div>
+    <div class="mb-3">
+      <label class="form-label">Код доступа (только для игроков)</label>
+      <input type="text" name="access_code" class="form-control" value="{{ request.form.access_code or '' }}" maxlength="9" placeholder="ABC-12345">
+    </div>
+    <button type="submit" class="btn btn-primary">Войти</button>
+  </form>
+
+  <script>
+    function toggleAccessCode() {
+      const role = document.getElementById("role").value;
+      document.getElementById("access_code_group").style.display = (role === "Игрок") ? "block" : "none";
+    }
+
+    function checkCode() {
+      const code = document.getElementById("access_code").value;
+      fetch("/room_snapshot?code=" + code)
+        .then(r => r.json())
+        .then(data => {
+          const slots = data.slots || {};
+          let html = "<table class='table table-bordered'><thead><tr><th>№</th><th>Имя игрока</th><th>Доступность</th></tr></thead><tbody>";
+          ["11111","22222","33333"].forEach((s,i) => {
+            html += `<tr><td>${i+1}</td><td>${slots[s]||"–"}</td><td>${slots[s]?"🟢":"⚪"}</td></tr>`;
+          });
+          html += "</tbody></table>";
+          document.getElementById("snapshot").innerHTML = html;
+        });
+    }
+  </script>
+</body>
+</html>
