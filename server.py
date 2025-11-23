@@ -137,18 +137,11 @@ def generate_code_route():
 @app.route("/restore_code", methods=["POST"])
 def restore_code_route():
     global current_game_code
-    code = None
-    try:
-        with open("gamecodes.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            code = data[-1] if data else None
-    except Exception as e:
-        print("Ошибка чтения gamecodes.json:", e)
+    pdata = load_playerdata()
+    code = pdata.get("current_game_code")
     if code:
         current_game_code = code
         ensure_code_state(code)
-        pdata = load_playerdata()
-        pdata["current_game_code"] = code
         if code not in pdata["sessions"]:
             pdata["sessions"][code] = {s: None for s in valid_slots}
         save_playerdata(pdata)
@@ -206,7 +199,6 @@ def logout_player():
     return redirect(url_for("login"))
 
 # ===== Socket.IO =====
-from flask import request
 
 @socketio.on("connect")
 def on_connect():
