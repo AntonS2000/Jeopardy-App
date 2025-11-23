@@ -1,5 +1,5 @@
 {
-  "current_game_code": "XFY-96824",
+  "current_game_code": "GLC-02431",
   "sessions": {
     "UIL-94456": {
       "11111": null,
@@ -17,6 +17,23 @@
         "name": "Александр",
         "token": "21ffe441-adec-4ad6-9d48-a0eda508aba9",
         "connected": true
+      }
+    },
+    "GLC-02431": {
+      "11111": {
+        "name": "Михаил",
+        "token": "7332926e-5347-44b2-8e83-6f2ba95f8cbf",
+        "connected": false
+      },
+      "22222": {
+        "name": "Hdhhcbf",
+        "token": "d4a55890-db9d-47fc-80fa-21da689a1018",
+        "connected": false
+      },
+      "33333": {
+        "name": "Александр",
+        "token": "fb165112-f0dc-434d-93da-8cc554f89e06",
+        "connected": false
       }
     }
   }
