@@ -7,6 +7,29 @@
   <style>
     .super-ellipse { width: 150px; height: 100px; background-color: white; border-radius: 30px; margin: auto; }
     .card h5 { margin-bottom: 8px; }
+    .indicator-container { 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      gap: 10px; 
+      margin-top: 10px;
+    }
+    .green-indicator { 
+      width: 20px; 
+      height: 20px; 
+      background-color: white; 
+      border-radius: 50%; 
+    }
+    .yellow-indicator { 
+      width: 20px; 
+      height: 20px; 
+      background-color: #ffcc00; 
+      border-radius: 50%; 
+      cursor: pointer;
+    }
+    .yellow-indicator.active { 
+      background-color: #ffd700; 
+    }
   </style>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
@@ -32,6 +55,10 @@
       <div class="card p-3">
         <h5 id="name_{{slot}}">Игрок {{slot}}</h5>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
+        <div class="indicator-container">
+          <div id="green_{{slot}}" class="green-indicator"></div>
+          <div id="yellow_{{slot}}" class="yellow-indicator" onclick="unlockSignal('{{slot}}')"></div>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -49,18 +76,63 @@
       document.getElementById("ind_" + slot).style.backgroundColor = on ? "darkgreen" : "white";
       document.getElementById("name_" + slot).textContent = name ? name : "Игрок " + slot;
     }
+    
+    function updateAdminIndicators(data) {
+      const slots = data.slots || {};
+      ["11111","22222","33333"].forEach(s => {
+        setIndicator(s, !!slots[s], slots[s]);
+        // Обновляем индикаторы доступности
+        const greenIndicator = document.getElementById("green_" + s);
+        const yellowIndicator = document.getElementById("yellow_" + s);
+        if (slots[s]) {
+          greenIndicator.style.backgroundColor = "darkgreen";
+        } else {
+          greenIndicator.style.backgroundColor = "white";
+        }
+        // Сбрасываем желтый индикатор, если не указано иное
+        if (!data.yellowIndicators || !data.yellowIndicators[s]) {
+          yellowIndicator.classList.remove("active");
+        } else {
+          yellowIndicator.classList.add("active");
+        }
+      });
+    }
+    
+    function unlockSignal(slot) {
+      socket.emit("admin_unlock_signal", {
+        code: currentCode,
+        slot: slot
+      });
+    }
 
     socket.on("connect", () => {
       socket.emit("admin_join", { code: currentCode });
     });
 
     socket.on("admin_state", data => {
-      const slots = data.slots || {};
-      ["11111","22222","33333"].forEach(s => setIndicator(s, !!slots[s], slots[s]));
+      updateAdminIndicators(data);
     });
 
     socket.on("player_update", data => {
       setIndicator(data.player_id, data.status, data.name);
+    });
+    
+    // Обработка сигнала от игрока
+    socket.on("player_signal_received", data => {
+      // Активируем желтый индикатор для игрока, который нажал кнопку
+      if (data.player_id) {
+        const yellowIndicator = document.getElementById("yellow_" + data.player_id);
+        yellowIndicator.classList.add("active");
+      }
+    });
+    
+    // Обработка разблокировки сигнала
+    socket.on("signal_unlocked", data => {
+      // Сбрасываем желтый индикатор для всех слотов
+      ["11111","22222","33333"].forEach(s => {
+        const yellowIndicator = document.getElementById("yellow_" + s);
+        yellowIndicator.classList.remove("active");
+      });
     });
 
     socket.on("code_updated", data => {

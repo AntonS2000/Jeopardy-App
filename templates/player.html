@@ -6,17 +6,70 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css">
   <style>
     .super-ellipse { width: 150px; height: 100px; background-color: white; border-radius: 30px; margin: auto; }
+    .signal-button { 
+      width: 100px; 
+      height: 100px; 
+      background-color: #dc3545; 
+      border-radius: 50%; 
+      border: none; 
+      margin: 20px auto; 
+      cursor: pointer; 
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      transition: all 0.2s ease;
+      display: block;
+    }
+    .signal-button:hover { 
+      background-color: #c82333; 
+      transform: scale(1.05);
+    }
+    .signal-button:active { 
+      transform: scale(0.95);
+    }
+    .signal-button.disabled { 
+      background-color: #6c757d; 
+      cursor: not-allowed;
+      transform: none;
+    }
+    .indicator-container { 
+      display: flex; 
+      justify-content: center; 
+      align-items: center; 
+      gap: 10px; 
+      margin-top: 10px;
+    }
+    .green-indicator { 
+      width: 20px; 
+      height: 20px; 
+      background-color: white; 
+      border-radius: 50%; 
+    }
+    .yellow-indicator { 
+      width: 20px; 
+      height: 20px; 
+      background-color: #ffcc00; 
+      border-radius: 50%; 
+    }
+    .yellow-indicator.active { 
+      background-color: #ffd700; 
+    }
   </style>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
 </head>
 <body class="container mt-5 text-center">
   <h1>Панель игрока</h1>
+  
+  <button id="signalButton" class="signal-button" onclick="sendSignal()"></button>
+  
   <div class="row mt-3">
     {% for slot in ["11111","22222","33333"] %}
     <div class="col">
       <div class="card p-3">
         <h5 id="name_{{slot}}">Игрок {{slot}}</h5>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
+        <div class="indicator-container">
+          <div id="green_{{slot}}" class="green-indicator"></div>
+          <div id="yellow_{{slot}}" class="yellow-indicator"></div>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -36,9 +89,54 @@
       window.location.href = "/";
     }
 
+    let signalButtonActive = false;
+    
     function setIndicator(slot, on, name) {
       document.getElementById("ind_" + slot).style.backgroundColor = on ? "darkgreen" : "white";
       document.getElementById("name_" + slot).textContent = name ? name : "Игрок " + slot;
+    }
+    
+    function updateSignalButton(disabled) {
+      const button = document.getElementById("signalButton");
+      if (disabled) {
+        button.classList.add("disabled");
+        signalButtonActive = false;
+      } else {
+        button.classList.remove("disabled");
+        signalButtonActive = true;
+      }
+    }
+    
+    function updatePlayerIndicators(data) {
+      const slots = data.slots || {};
+      ["11111","22222","33333"].forEach(s => {
+        setIndicator(s, !!slots[s], slots[s]);
+        // Обновляем индикаторы доступности
+        const greenIndicator = document.getElementById("green_" + s);
+        const yellowIndicator = document.getElementById("yellow_" + s);
+        if (slots[s]) {
+          greenIndicator.style.backgroundColor = "darkgreen";
+        } else {
+          greenIndicator.style.backgroundColor = "white";
+        }
+        // Сбрасываем желтый индикатор, если не указано иное
+        if (!data.yellowIndicators || !data.yellowIndicators[s]) {
+          yellowIndicator.classList.remove("active");
+        }
+      });
+    }
+    
+    function sendSignal() {
+      if (!signalButtonActive) return; // Не отправляем сигнал, если кнопка заблокирована
+      
+      socket.emit("player_signal", {
+        player_id: playerId,
+        code: currentCode,
+        name: playerName,
+        token: playerToken
+      });
+      // Блокируем кнопку после отправки сигнала
+      updateSignalButton(true);
     }
 
     socket.on("connect", () => {
@@ -55,8 +153,37 @@
     });
 
     socket.on("admin_state", data => {
-      const slots = data.slots || {};
-      ["11111","22222","33333"].forEach(s => setIndicator(s, !!slots[s], slots[s]));
+      updatePlayerIndicators(data);
+    });
+    
+    // Обработка сигнала от администратора о срабатывании кнопки
+    socket.on("signal_triggered", data => {
+      // Активируем желтые индикаторы
+      if (data.yellowIndicators) {
+        Object.keys(data.yellowIndicators).forEach(slot => {
+          if (data.yellowIndicators[slot]) {
+            const yellowIndicator = document.getElementById("yellow_" + slot);
+            yellowIndicator.classList.add("active");
+          }
+        });
+      }
+      // Блокируем кнопку, если сигнал пришёл для текущего игрока
+      if (data.blockedPlayerId === playerId) {
+        updateSignalButton(true);
+      }
+    });
+    
+    // Обработка разблокировки сигнала администратором
+    socket.on("signal_unlocked", data => {
+      // Сбрасываем все желтые индикаторы
+      ["11111","22222","33333"].forEach(s => {
+        const yellowIndicator = document.getElementById("yellow_" + s);
+        yellowIndicator.classList.remove("active");
+      });
+      // Разблокируем кнопку, если это текущий игрок
+      if (data.players.includes(playerId)) {
+        updateSignalButton(false);
+      }
     });
 
     socket.on("join_error", msg => {
