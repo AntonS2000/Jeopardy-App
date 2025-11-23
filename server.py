@@ -254,7 +254,16 @@ def admin_join(data):
                             else None) for s in valid_slots}
         else:
             snapshot = {s: None for s in valid_slots}
-        emit("admin_state", {"code": code, "slots": snapshot})
+        # Подготовим информацию о желтых индикаторах
+        yellow_indicators = {}
+        if active_signal["active"] and active_signal["code"] == code:
+            yellow_indicators[active_signal["player_id"]] = True
+        
+        emit("admin_state", {
+            "code": code, 
+            "slots": snapshot,
+            "yellowIndicators": yellow_indicators
+        })
 
 @socketio.on("join_player")
 def handle_join_player(data):
@@ -324,7 +333,16 @@ def handle_join_player(data):
         snapshot = {s: (pdata["sessions"][code][s]["name"]
                         if pdata["sessions"][code][s] and pdata["sessions"][code][s].get("connected")
                         else None) for s in valid_slots}
-        emit("admin_state", {"code": code, "slots": snapshot}, room=code)
+        # Подготовим информацию о желтых индикаторах
+        yellow_indicators = {}
+        if active_signal["active"] and active_signal["code"] == code:
+            yellow_indicators[active_signal["player_id"]] = True
+        
+        emit("admin_state", {
+            "code": code, 
+            "slots": snapshot,
+            "yellowIndicators": yellow_indicators
+        }, room=code)
     else:
         # Должно быть недостижимо, но на всякий случай
         emit("join_error", {"message": "Слот недоступен"})
@@ -333,16 +351,123 @@ def handle_join_player(data):
 def request_admin_snapshot(data):
     code = data.get("code")
     if not code:
-        emit("admin_state", {"code": None, "slots": {s: None for s in valid_slots}})
+        # Подготовим информацию о желтых индикаторах
+        yellow_indicators = {}
+        if active_signal["active"] and active_signal["code"] is None:
+            yellow_indicators[active_signal["player_id"]] = True
+        
+        emit("admin_state", {
+            "code": None, 
+            "slots": {s: None for s in valid_slots},
+            "yellowIndicators": yellow_indicators
+        })
         return
     pdata = load_playerdata()
     if code not in pdata["sessions"]:
-        emit("admin_state", {"code": code, "slots": {s: None for s in valid_slots}})
+        # Подготовим информацию о желтых индикаторах
+        yellow_indicators = {}
+        if active_signal["active"] and active_signal["code"] == code:
+            yellow_indicators[active_signal["player_id"]] = True
+        
+        emit("admin_state", {
+            "code": code, 
+            "slots": {s: None for s in valid_slots},
+            "yellowIndicators": yellow_indicators
+        })
         return
     snapshot = {s: (pdata["sessions"][code][s]["name"]
                     if pdata["sessions"][code][s] and pdata["sessions"][code][s].get("connected")
                     else None) for s in valid_slots}
-    emit("admin_state", {"code": code, "slots": snapshot})
+    # Подготовим информацию о желтых индикаторах
+    yellow_indicators = {}
+    if active_signal["active"] and active_signal["code"] == code:
+        yellow_indicators[active_signal["player_id"]] = True
+    
+    emit("admin_state", {
+        "code": code, 
+        "slots": snapshot,
+        "yellowIndicators": yellow_indicators
+    })
+
+
+# ===== Новые обработчики для сигнала игроков =====
+
+# Глобальное состояние для отслеживания активного сигнала
+active_signal = {
+    "code": None,           # Код игры, в которой активирован сигнал
+    "player_id": None,      # ID игрока, который нажал кнопку
+    "active": False         # Активен ли сигнал в данный момент
+}
+
+@socketio.on("player_signal")
+def handle_player_signal(data):
+    global active_signal
+    
+    player_id = data.get("player_id")
+    code = data.get("code")
+    player_name = data.get("name")
+    token = data.get("token")
+    
+    # Проверяем, что игра активна и совпадает код
+    if code != current_game_code:
+        emit("join_error", {"message": "Сеанс недоступен или устарел"})
+        return
+    
+    # Проверяем, что сигнал ещё не активирован другим игроком
+    if active_signal["active"] and active_signal["code"] == code:
+        # Уведомляем игрока, что сигнал уже активирован
+        emit("signal_triggered", {
+            "blockedPlayerId": player_id,
+            "yellowIndicators": {active_signal["player_id"]: True}
+        })
+        return
+    
+    # Проверяем токен игрока
+    pdata = load_playerdata()
+    if (code in pdata["sessions"] and 
+        player_id in pdata["sessions"][code] and
+        pdata["sessions"][code][player_id] and
+        pdata["sessions"][code][player_id].get("token") != token):
+        emit("join_error", {"message": "Неверный токен игрока"})
+        return
+    
+    # Активируем сигнал
+    active_signal["code"] = code
+    active_signal["player_id"] = player_id
+    active_signal["active"] = True
+    
+    # Отправляем сигнал всем участникам комнаты
+    emit("player_signal_received", {
+        "player_id": player_id,
+        "name": player_name
+    }, room=code)
+    
+    # Отправляем обновление состояния с активированным желтым индикатором
+    yellow_indicators = {player_id: True}
+    emit("signal_triggered", {
+        "blockedPlayerId": player_id,
+        "yellowIndicators": yellow_indicators
+    }, room=code)
+
+@socketio.on("admin_unlock_signal")
+def handle_admin_unlock_signal(data):
+    global active_signal
+    
+    code = data.get("code")
+    slot = data.get("slot")
+    
+    # Проверяем, что сигнал действительно был активирован
+    if active_signal["active"] and active_signal["code"] == code:
+        # Сбрасываем активный сигнал
+        active_signal["code"] = None
+        active_signal["player_id"] = None
+        active_signal["active"] = False
+        
+        # Отправляем сигнал разблокировки всем участникам комнаты
+        emit("signal_unlocked", {
+            "players": valid_slots  # Разблокируем кнопки для всех игроков
+        }, room=code)
+
 
 # ===== Запуск =====
 if __name__ == "__main__":
