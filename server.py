@@ -1,4 +1,4 @@
-import json, random, string, os, uuid  # ← добавлен uuid
+import json, random, string, os, uuid
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -10,17 +10,25 @@ socketio = SocketIO(app, async_mode="threading")
 
 playerdata_file = "playerdata.json"
 current_game_code = None
-game_state = {}   # { code: { "11111": {"sid":..., "name":...} или None } }
+game_state = {}  # { code: { "11111": {"sid":..., "name":...} или None } }
 socket_registry = {}
-valid_slots = ["11111","22222","33333"]
+valid_slots = ["11111", "22222", "33333"]
 
 # ===== Работа с файлом playerdata.json =====
 def load_playerdata():
     try:
         with open(playerdata_file, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except:
-        return {"current_game_code": None, "sessions": {}}
+            data = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
+        data = {}
+
+    # Гарантируем наличие обеих обязательных структур
+    if "current_game_code" not in data or data["current_game_code"] is None:
+        data["current_game_code"] = None
+    if "sessions" not in data or not isinstance(data["sessions"], dict):
+        data["sessions"] = {}
+
+    return data
 
 def save_playerdata(data):
     with open(playerdata_file, "w", encoding="utf-8") as f:
@@ -44,6 +52,7 @@ def login():
         password = request.form.get("password") or ""
         role = request.form.get("role") or ""
         access_code = request.form.get("access_code") or ""
+
         if role == "Администратор":
             if login_val == "Admin" and password == "Administrator":
                 session.clear()
@@ -51,6 +60,7 @@ def login():
                 return redirect(url_for("admin"))
             flash("Неверные данные администратора")
             return redirect(url_for("login"))
+
         if role == "Игрок":
             if current_game_code is None or access_code != current_game_code:
                 flash("Неверный код доступа или сеанс не активен")
@@ -58,61 +68,61 @@ def login():
             if password not in valid_slots:
                 flash("Неверный пароль игрока")
                 return redirect(url_for("login"))
+
             ensure_code_state(current_game_code)
-            # Загружаем playerdata ДО проверки слота
             pdata = load_playerdata()
+
+            # Инициализация sessions[current_game_code], если отсутствует
             if current_game_code not in pdata["sessions"]:
                 pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
-            # Проверяем, есть ли уже запись для этого пароля
+                save_playerdata(pdata)
+
             slot_info = pdata["sessions"][current_game_code][password]
-            # Если слот занят другим игроком (с другим токеном) — запрещаем
+
+            # Проверка: занят ли слот другим игроком
             if slot_info and slot_info.get("connected"):
-                # Проверяем, тот ли это игрок по токену
-                # Если токены не совпадают, значит это другой игрок
-                session_token = session.get("player_token")  # токен из текущей сессии
+                session_token = session.get("player_token")
                 if session_token and slot_info.get("token") != session_token:
                     flash("Этот слот уже занят другим игроком")
                     return redirect(url_for("login"))
-                # Если сессия пуста (например, при обновлении вкладки), 
-                # но слот занят, то проверим, может быть, это тот же игрок по имени
                 elif not session_token and slot_info.get("name") != login_val:
                     flash("Этот слот уже занят другим игроком")
                     return redirect(url_for("login"))
-                # Если токены совпадают или это тот же игрок - разрешаем (восстановление сессии)
-            # Генерируем или восстанавливаем токен
+
+            # Генерация/восстановление токена
             if slot_info and slot_info.get("token"):
-                player_token = slot_info["token"]  # восстанавливаем
+                player_token = slot_info["token"]
             else:
-                player_token = str(uuid.uuid4())  # новый
+                player_token = str(uuid.uuid4())
                 pdata["sessions"][current_game_code][password] = {
                     "name": login_val,
                     "token": player_token,
                     "connected": False
                 }
                 save_playerdata(pdata)
+
             session.clear()
             session["role"] = "player"
             session["player_id"] = password
             session["player_name"] = login_val
             session["code"] = current_game_code
-            session["player_token"] = player_token  # ← сохраняем в session
+            session["player_token"] = player_token
             return redirect(url_for("player", player_id=password))
+
     return render_template("login.html")
 
 @app.route("/player/<player_id>")
 def player(player_id):
     if session.get("role") != "player":
         return redirect(url_for("login"))
-    # Проверяем, что у сессии есть необходимые данные
     player_token = session.get("player_token")
     if not player_token:
-        # Если токена нет, перенаправляем на логин
         return redirect(url_for("login"))
     return render_template("player.html",
                            player_id=player_id,
                            game_code=session.get("code"),
                            player_name=session.get("player_name"),
-                           player_token=player_token)  # ← передаём токен
+                           player_token=player_token)
 
 @app.route("/admin")
 def admin():
@@ -127,10 +137,15 @@ def generate_code_route():
     current_game_code = code
     ensure_code_state(code)
     game_state[code] = {s: None for s in valid_slots}
+
     pdata = load_playerdata()
+    # Инициализируем sessions как словарь, если нужно
+    if not isinstance(pdata.get("sessions"), dict):
+        pdata["sessions"] = {}
     pdata["current_game_code"] = code
     pdata["sessions"][code] = {s: None for s in valid_slots}
     save_playerdata(pdata)
+
     socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
 
@@ -142,9 +157,10 @@ def restore_code_route():
     if code:
         current_game_code = code
         ensure_code_state(code)
+        # Инициализация, если отсутствует
         if code not in pdata["sessions"]:
             pdata["sessions"][code] = {s: None for s in valid_slots}
-        save_playerdata(pdata)
+            save_playerdata(pdata)
         socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
 
@@ -155,10 +171,15 @@ def end_session():
         room = current_game_code
         socketio.emit("session_ended", room=room)
         game_state[current_game_code] = {s: None for s in valid_slots}
+
         pdata = load_playerdata()
-        pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
+        if not isinstance(pdata.get("sessions"), dict):
+            pdata["sessions"] = {}
+        if current_game_code in pdata["sessions"]:
+            pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
         pdata["current_game_code"] = None
         save_playerdata(pdata)
+
         current_game_code = None
         socketio.emit("code_updated", {"code": None})
     return redirect(url_for("login"))
@@ -166,12 +187,24 @@ def end_session():
 @app.route("/room_snapshot")
 def room_snapshot():
     code = request.args.get("code")
-    pdata = load_playerdata()
-    if not code or code not in pdata["sessions"]:
+    if not code:
         return {"slots": {}}
-    snapshot = {s: (pdata["sessions"][code][s]["name"]
-                    if pdata["sessions"][code][s] and pdata["sessions"][code][s].get("connected")
-                    else None) for s in valid_slots}
+
+    pdata = load_playerdata()
+    # Защита от отсутствия ключа
+    sessions = pdata.get("sessions", {})
+    if not isinstance(sessions, dict) or code not in sessions:
+        return {"slots": {s: None for s in valid_slots}}
+
+    current_sessions = sessions[code]
+    if not isinstance(current_sessions, dict):
+        current_sessions = {s: None for s in valid_slots}
+
+    snapshot = {}
+    for s in valid_slots:
+        info = current_sessions.get(s)
+        snapshot[s] = info["name"] if info and info.get("connected") else None
+
     return {"slots": snapshot}
 
 @app.route("/logout_player", methods=["POST"])
@@ -180,26 +213,21 @@ def logout_player():
     code = session.get("code")
     if code and player_id:
         pdata = load_playerdata()
-        if code in pdata["sessions"] and pdata["sessions"][code].get(player_id):
-            # Очищаем connected, но оставляем запись (для восстановления)
-            pdata["sessions"][code][player_id]["connected"] = False
-            save_playerdata(pdata)
-            socketio.emit("player_update", {
-                "player_id": player_id,
-                "status": False,
-                "name": None
-            }, room=code)
-        ensure_code_state(code)
-        # Проверяем, что SID в game_state совпадает с текущим игроком, чтобы избежать конфликта при выходе разных вкладок
-        if game_state.get(code, {}).get(player_id):
-            # Не устанавливаем в None, т.к. другой экземпляр вкладки может быть активен
-            # Вместо этого, уведомляем других участников о статусе
-            pass
+        sessions = pdata.get("sessions", {})
+        if isinstance(sessions, dict) and code in sessions:
+            slot_data = sessions[code].get(player_id)
+            if isinstance(slot_data, dict):
+                slot_data["connected"] = False
+                save_playerdata(pdata)
+                socketio.emit("player_update", {
+                    "player_id": player_id,
+                    "status": False,
+                    "name": None
+                }, room=code)
     session.clear()
     return redirect(url_for("login"))
 
 # ===== Socket.IO =====
-
 @socketio.on("connect")
 def on_connect():
     socket_registry[request.sid] = {"role": None, "code": None, "slot": None}
@@ -212,29 +240,26 @@ def on_disconnect():
     role, code, slot = info["role"], info["code"], info["slot"]
     if role == "player" and code and slot:
         pdata = load_playerdata()
-        if code in pdata["sessions"] and pdata["sessions"][code].get(slot):
-            # Проверяем, есть ли другие соединения для этого же слота в socket_registry
-            other_connections_exist = False
-            for sid, info in socket_registry.items():
-                if info.get("role") == "player" and info.get("code") == code and info.get("slot") == slot and sid != request.sid:
-                    other_connections_exist = True
-                    break
-            
-            # Обновляем connected статус только если других соединений для этого слота нет
-            if not other_connections_exist:
-                pdata["sessions"][code][slot]["connected"] = False
-                save_playerdata(pdata)
+        sessions = pdata.get("sessions", {})
+        if isinstance(sessions, dict) and code in sessions:
+            current_slot = sessions[code].get(slot)
+            if isinstance(current_slot, dict):
+                # Проверяем другие соединения для этого слота
+                other_connections_exist = any(
+                    v.get("role") == "player" and v.get("code") == code and v.get("slot") == slot
+                    for v in socket_registry.values()
+                )
+                if not other_connections_exist:
+                    current_slot["connected"] = False
+                    save_playerdata(pdata)
+
         ensure_code_state(code)
-        # Проверяем, что SID в game_state совпадает с отключающимся, чтобы избежать конфликта при отключении разных вкладок
         if game_state.get(code, {}).get(slot) and game_state[code][slot]["sid"] == request.sid:
-            # Проверяем, есть ли другие соединения для этого же слота в socket_registry
-            other_connections_exist = False
-            for sid, info in socket_registry.items():
-                if info.get("role") == "player" and info.get("code") == code and info.get("slot") == slot and sid != request.sid:
-                    other_connections_exist = True
-                    break
-            
-            # Обновляем game_state только если других соединений для этого слота нет
+            # Проверка других подключений в game_state (дубликатов не бывает — только socket_registry)
+            other_connections_exist = any(
+                v.get("role") == "player" and v.get("code") == code and v.get("slot") == slot
+                for v in socket_registry.values()
+            )
             if not other_connections_exist:
                 game_state[code][slot] = None
                 emit("player_update", {"player_id": slot, "status": False, "name": None}, room=code)
@@ -248,10 +273,15 @@ def admin_join(data):
         ensure_code_state(code)
         join_room(code)
         pdata = load_playerdata()
-        if code in pdata["sessions"]:
-            snapshot = {s: (pdata["sessions"][code][s]["name"]
-                            if pdata["sessions"][code][s] and pdata["sessions"][code][s].get("connected")
-                            else None) for s in valid_slots}
+        sessions = pdata.get("sessions", {})
+        if isinstance(sessions, dict) and code in sessions:
+            current_sessions = sessions[code]
+            if not isinstance(current_sessions, dict):
+                current_sessions = {s: None for s in valid_slots}
+            snapshot = {}
+            for s in valid_slots:
+                info = current_sessions.get(s)
+                snapshot[s] = info["name"] if info and info.get("connected") else None
         else:
             snapshot = {s: None for s in valid_slots}
         # Подготовим информацию о желтых индикаторах
@@ -271,63 +301,65 @@ def handle_join_player(data):
     code = data.get("code")
     player_name = data.get("name")
     token = data.get("token")
+
     if code is None or (current_game_code and code != current_game_code):
         emit("join_error", {"message": "Сеанс недоступен или устарел"})
         return
     if player_id not in valid_slots:
         emit("join_error", {"message": "Недействительный слот"})
         return
+
     ensure_code_state(code)
     pdata = load_playerdata()
-    if code not in pdata["sessions"]:
-        pdata["sessions"][code] = {s: None for s in valid_slots}
-    slot_info = pdata["sessions"][code][player_id]
+    sessions = pdata.get("sessions", {})
+    if not isinstance(sessions, dict):
+        sessions = {}
+        pdata["sessions"] = sessions
 
-    # Проверяем, что токен соответствует существующему, если слот уже был занят
+    if code not in sessions:
+        sessions[code] = {s: None for s in valid_slots}
+
+    slot_info = sessions[code][player_id]
+
+    # Проверки на конфликт
     if slot_info and slot_info.get("connected"):
-        # Если токены не совпадают, значит это другой игрок, пытается зайти в занятый слот
         if token and slot_info.get("token") != token:
             emit("join_error", {"message": "Слот уже занят другим игроком"})
             return
-        # Если токен пустой (например, после обновления вкладки), проверим по имени
         elif not token and slot_info.get("name") != player_name:
             emit("join_error", {"message": "Слот уже занят другим игроком"})
             return
-        # Если токены совпадают или имя совпадает - это восстановление соединения - разрешаем
 
-    # Разрешаем вход, если:
-    # - слот пуст, ИЛИ
-    # - слот занят, но игрок offline (connected=False), ИЛИ
-    # - слот занят тем же игроком (по токену или имени) - восстановление соединения
-    if (slot_info is None or 
-        not slot_info.get("connected") or 
+    # Разрешить вход при: пустой слот, offline, или совпадающий токен/имя
+    if (slot_info is None or
+        not slot_info.get("connected") or
         (token and slot_info.get("token") == token) or
         (not token and slot_info.get("name") == player_name)):
+
         if slot_info is None:
-            # Новый слот: создаём запись
-            pdata["sessions"][code][player_id] = {
+            sessions[code][player_id] = {
                 "name": player_name,
-                "token": token,
+                "token": token or str(uuid.uuid4()),
                 "connected": True
             }
         else:
-            # Восстановление: обновляем только connected и name (token остаётся прежним!)
-            pdata["sessions"][code][player_id]["name"] = player_name
-            pdata["sessions"][code][player_id]["connected"] = True
+            # Обновляем имя и connected, сохраняя оригинальный токен
+            sessions[code][player_id]["name"] = player_name
+            sessions[code][player_id]["connected"] = True
+
         save_playerdata(pdata)
-        
-        # Отключаем предыдущее соединение в этом слоте, если оно есть в game_state
+
+        # Обновление game_state: замена старого SID
         if game_state.get(code, {}).get(player_id):
             old_sid = game_state[code][player_id]["sid"]
-            # Проверяем, что старый SID не совпадает с текущим
             if old_sid != request.sid:
-                # Уведомляем старое соединение о необходимости переподключения
-                # (в реальности Socket.IO сам отключит старое соединение при потере связи)
+                # Можно добавить leave_room(old_sid), но Socket.IO сам отслеживает disconnect
                 pass
-        
+
         game_state[code][player_id] = {"sid": request.sid, "name": player_name}
         socket_registry[request.sid] = {"role": "player", "code": code, "slot": player_id}
         join_room(code)
+
         emit("player_update", {"player_id": player_id, "status": True, "name": player_name}, room=code)
         # Обновляем админов
         snapshot = {s: (pdata["sessions"][code][s]["name"]
@@ -344,7 +376,6 @@ def handle_join_player(data):
             "yellowIndicators": yellow_indicators
         }, room=code)
     else:
-        # Должно быть недостижимо, но на всякий случай
         emit("join_error", {"message": "Слот недоступен"})
 
 @socketio.on("request_admin_snapshot")
@@ -362,6 +393,7 @@ def request_admin_snapshot(data):
             "yellowIndicators": yellow_indicators
         })
         return
+
     pdata = load_playerdata()
     if code not in pdata["sessions"]:
         # Подготовим информацию о желтых индикаторах
