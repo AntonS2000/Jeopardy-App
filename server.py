@@ -450,6 +450,7 @@ def handle_player_signal(data):
         # Уведомляем игрока, что сигнал уже активирован
         emit("signal_triggered", {
             "blockedPlayerId": player_id,
+            "winnerPlayerId": active_signal["player_id"],
             "yellowIndicators": {active_signal["player_id"]: True}
         })
         return
@@ -478,8 +479,28 @@ def handle_player_signal(data):
     yellow_indicators = {player_id: True}
     emit("signal_triggered", {
         "blockedPlayerId": player_id,
+        "winnerPlayerId": player_id,  # Добавляем идентификатор победителя
         "yellowIndicators": yellow_indicators
     }, room=code)
+    
+    # Автоматическая разблокировка через 10 секунд
+    from threading import Timer
+    timer = Timer(10.0, auto_unlock_signal, args=[code])
+    timer.start()
+
+def auto_unlock_signal(code):
+    global active_signal
+    # Проверяем, что сигнал всё ещё активен и относится к той же игре
+    if active_signal["active"] and active_signal["code"] == code:
+        # Сбрасываем активный сигнал
+        active_signal["code"] = None
+        active_signal["player_id"] = None
+        active_signal["active"] = False
+
+        # Отправляем сигнал разблокировки всем участникам комнаты
+        emit("signal_unlocked", {
+            "players": valid_slots  # Разблокируем кнопки для всех игроков
+        }, room=code)
 
 @socketio.on("admin_unlock_signal")
 def handle_admin_unlock_signal(data):

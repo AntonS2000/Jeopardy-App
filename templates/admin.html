@@ -59,11 +59,60 @@
           <div id="green_{{slot}}" class="green-indicator"></div>
           <div id="yellow_{{slot}}" class="yellow-indicator" onclick="unlockSignal('{{slot}}')"></div>
         </div>
+        <div class="mt-3">
+          <div class="input-group mb-2">
+            <input type="text" id="score_{{slot}}" class="form-control text-center" value="0" readonly>
+            <span class="input-group-text">очков</span>
+          </div>
+          <div class="d-flex justify-content-center gap-2 mb-2">
+            <button class="btn btn-success btn-sm" onclick="adjustScore('{{slot}}', 1)">+</button>
+            <input type="number" id="score_input_{{slot}}" class="form-control" value="100" style="width: 80px;">
+            <button class="btn btn-danger btn-sm" onclick="adjustScore('{{slot}}', -1)">-</button>
+          </div>
+        </div>
       </div>
     </div>
     {% endfor %}
   </div>
 
+  <div class="container mt-3">
+    <div class="row">
+      <div class="col-12">
+        <div class="d-flex justify-content-center flex-wrap gap-2 mb-2">
+          <button class="btn btn-outline-primary" onclick="setScoreValue(100)">100</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(200)">200</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(300)">300</button>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-12">
+        <div class="d-flex justify-content-center flex-wrap gap-2 mb-2">
+          <button class="btn btn-outline-primary" onclick="setScoreValue(400)">400</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(500)">500</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(600)">600</button>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-12">
+        <div class="d-flex justify-content-center flex-wrap gap-2 mb-2">
+          <button class="btn btn-outline-primary" onclick="setScoreValue(800)">800</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(900)">900</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(1000)">1000</button>
+        </div>
+      </div>
+    </div>
+    <div class="row">
+      <div class="col-12">
+        <div class="d-flex justify-content-center flex-wrap gap-2 mb-3">
+          <button class="btn btn-outline-primary" onclick="setScoreValue(1200)">1200</button>
+          <button class="btn btn-outline-primary" onclick="setScoreValue(1500)">1500</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  
   <form method="POST" action="/end_session" class="mt-3">
     <button class="btn btn-danger">Завершить сеанс</button>
   </form>
@@ -77,6 +126,34 @@
       document.getElementById("name_" + slot).textContent = name ? name : "Игрок " + slot;
     }
     
+    function adjustScore(slot, operation) {
+      const scoreElement = document.getElementById("score_" + slot);
+      const scoreInput = document.getElementById("score_input_" + slot);
+      let currentScore = parseInt(scoreElement.value) || 0;
+      let adjustment = parseInt(scoreInput.value) || 0;
+      
+      if (operation === 1) {
+        currentScore += adjustment;
+      } else if (operation === -1) {
+        currentScore -= adjustment;
+      }
+      
+      // Ensure score doesn't go below 0
+      currentScore = Math.max(0, currentScore);
+      
+      scoreElement.value = currentScore;
+    }
+    
+    function setScoreValue(value) {
+      // Set the value in all score input fields
+      ["11111", "22222", "33333"].forEach(slot => {
+        const scoreInput = document.getElementById("score_input_" + slot);
+        if (scoreInput) {
+          scoreInput.value = value;
+        }
+      });
+    }
+
     function updateAdminIndicators(data) {
       const slots = data.slots || {};
       ["11111","22222","33333"].forEach(s => {
