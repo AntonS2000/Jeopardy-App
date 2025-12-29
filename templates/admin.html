@@ -45,6 +45,9 @@
       <form method="POST" action="/restore_code">
         <button class="btn btn-secondary" type="submit">Восстановить</button>
       </form>
+      <form method="POST" action="/start_game">
+        <button class="btn btn-primary" type="submit">Начать игру</button>
+      </form>
     </div>
     <input id="game_code" type="text" class="form-control mt-2" value="{{ game_code or '' }}" readonly>
   </div>
@@ -145,6 +148,17 @@
       currentScore = Math.max(0, currentScore);
       
       scoreElement.value = currentScore;
+      
+      // Отправляем обновление очков через socket.io
+      socket.emit("update_player_score", {
+        slot: slot,
+        points: adjustment,
+        operation: operation === 1 ? "add" : "subtract",
+        code: currentCode
+      });
+      
+      // Сбрасываем значение в поле ввода
+      scoreInput.value = 100;
     }
     
     function setScoreValue(value) {
@@ -187,6 +201,19 @@
 
     socket.on("connect", () => {
       socket.emit("admin_join", { code: currentCode });
+      
+      // Загружаем начальные значения очков
+      fetch('/get_player_scores')
+        .then(response => response.json())
+        .then(data => {
+          ["11111","22222","33333"].forEach(s => {
+            const scoreElement = document.getElementById("score_" + s);
+            if (scoreElement && data.scores && data.scores[s]) {
+              scoreElement.value = data.scores[s].total || 0;
+            }
+          });
+        })
+        .catch(error => console.error('Ошибка при загрузке очков:', error));
     });
 
     socket.on("admin_state", data => {
@@ -213,6 +240,14 @@
         const yellowIndicator = document.getElementById("yellow_" + s);
         yellowIndicator.classList.remove("active");
       });
+    });
+    
+    // Обработка обновления очков
+    socket.on("score_updated", data => {
+      const scoreElement = document.getElementById("score_" + data.slot);
+      if (scoreElement) {
+        scoreElement.value = data.total || 0;
+      }
     });
 
     socket.on("code_updated", data => {

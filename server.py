@@ -14,6 +14,24 @@ game_state = {}  # { code: { "11111": {"sid":..., "name":...} или None } }
 socket_registry = {}
 valid_slots = ["11111", "22222", "33333"]
 
+def save_playerdata(data):
+    with open(playerdata_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# Инициализация playerdata.json с начальной структурой
+def initialize_playerdata():
+    if not os.path.exists(playerdata_file):
+        initial_data = {
+            "current_game_code": None,
+            "sessions": {},
+            "start_time": None,
+            "end_time": None
+        }
+        save_playerdata(initial_data)
+
+# Вызываем инициализацию при запуске
+initialize_playerdata()
+
 # ===== Работа с файлом playerdata.json =====
 def load_playerdata():
     try:
@@ -22,11 +40,24 @@ def load_playerdata():
     except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
         data = {}
 
-    # Гарантируем наличие обеих обязательных структур
+    # Гарантируем наличие всех обязательных структур
     if "current_game_code" not in data or data["current_game_code"] is None:
         data["current_game_code"] = None
     if "sessions" not in data or not isinstance(data["sessions"], dict):
         data["sessions"] = {}
+    if "start_time" not in data:
+        data["start_time"] = None
+    if "end_time" not in data:
+        data["end_time"] = None
+    if "scores" not in data or not isinstance(data["scores"], dict):
+        data["scores"] = {}
+        # Инициализируем структуру очков для всех слотов
+        for slot in valid_slots:
+            if slot not in data["scores"]:
+                data["scores"][slot] = {
+                    "rounds": [0, 0, 0, 0],  # 4 раунда
+                    "total": 0  # Общий счет
+                }
 
     return data
 
@@ -149,6 +180,21 @@ def generate_code_route():
     socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
 
+
+@app.route("/start_game", methods=["POST"])
+def start_game():
+    global current_game_code
+    if current_game_code:
+        pdata = load_playerdata()
+        from datetime import datetime
+        pdata["start_time"] = datetime.now().isoformat()
+        # Сбросим очки при начале игры
+        for slot in valid_slots:
+            pdata["scores"][slot]["rounds"] = [0, 0, 0, 0]
+            pdata["scores"][slot]["total"] = 0
+        save_playerdata(pdata)
+    return redirect(url_for("admin"))
+
 @app.route("/restore_code", methods=["POST"])
 def restore_code_route():
     global current_game_code
@@ -178,6 +224,11 @@ def end_session():
         if current_game_code in pdata["sessions"]:
             pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
         pdata["current_game_code"] = None
+        
+        # Установить время окончания сессии
+        from datetime import datetime
+        pdata["end_time"] = datetime.now().isoformat()
+        
         save_playerdata(pdata)
 
         current_game_code = None
@@ -231,6 +282,67 @@ def logout_player():
 @socketio.on("connect")
 def on_connect():
     socket_registry[request.sid] = {"role": None, "code": None, "slot": None}
+
+
+@app.route("/update_score", methods=["POST"])
+def update_score():
+    slot = request.form.get("slot")
+    points = request.form.get("points", type=int)
+    operation = request.form.get("operation")  # "add" or "subtract"
+    
+    if slot and points is not None and operation in ["add", "subtract"]:
+        pdata = load_playerdata()
+        
+        if slot in pdata["scores"]:
+            if operation == "add":
+                pdata["scores"][slot]["total"] += points
+            elif operation == "subtract":
+                pdata["scores"][slot]["total"] = max(0, pdata["scores"][slot]["total"] - points)
+            
+            save_playerdata(pdata)
+    
+    return redirect(url_for("admin"))
+
+
+@app.route("/get_player_scores")
+def get_player_scores():
+    pdata = load_playerdata()
+    return {"scores": pdata["scores"], "start_time": pdata.get("start_time"), "end_time": pdata.get("end_time")}
+
+
+@socketio.on("update_player_score")
+def handle_update_player_score(data):
+    slot = data.get("slot")
+    points = data.get("points", 0)
+    operation = data.get("operation")  # "add" or "subtract"
+    round_number = data.get("round", 0)  # 0-based index for rounds (0-3)
+    
+    if slot and points is not None and operation in ["add", "subtract"]:
+        pdata = load_playerdata()
+        
+        if slot in pdata["scores"]:
+            if operation == "add":
+                # Update round score if round is specified
+                if 0 <= round_number < 4:
+                    pdata["scores"][slot]["rounds"][round_number] += points
+                # Update total score
+                pdata["scores"][slot]["total"] += points
+            elif operation == "subtract":
+                # Update round score if round is specified
+                if 0 <= round_number < 4:
+                    pdata["scores"][slot]["rounds"][round_number] = max(0, pdata["scores"][slot]["rounds"][round_number] - points)
+                # Update total score
+                pdata["scores"][slot]["total"] = max(0, pdata["scores"][slot]["total"] - points)
+            
+            save_playerdata(pdata)
+            
+            # Отправляем обновленные данные всем участникам комнаты
+            code = data.get("code", current_game_code)
+            emit("score_updated", {
+                "slot": slot,
+                "total": pdata["scores"][slot]["total"],
+                "rounds": pdata["scores"][slot]["rounds"]
+            }, room=code)
 
 @socketio.on("disconnect")
 def on_disconnect():
