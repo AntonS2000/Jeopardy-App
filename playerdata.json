@@ -1,5 +1,5 @@
 {
-  "current_game_code": "EOS-73054",
+  "current_game_code": "SWI-66897",
   "sessions": {
     "EOS-73054": {
       "11111": {
@@ -13,6 +13,23 @@
         "connected": true
       },
       "33333": null
+    },
+    "SWI-66897": {
+      "11111": {
+        "name": "111",
+        "token": "84753560-a116-4569-ab96-feee6bb5b991",
+        "connected": false
+      },
+      "22222": {
+        "name": "222",
+        "token": "e6398fb5-e26f-48d3-a41d-0da46d9e304b",
+        "connected": false
+      },
+      "33333": {
+        "name": "3",
+        "token": "ab92cb93-9a17-4cd4-8f5f-a73b35ca6ba8",
+        "connected": false
+      }
     }
   }
 }
