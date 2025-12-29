@@ -36,3 +36,5 @@ build/
 *.egg-info/
 *.whl
 ```
+
+playerdata.json
