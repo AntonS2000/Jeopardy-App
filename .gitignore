@@ -1,2 +1,32 @@
-Nothing needs to be added to .gitignore as the changes only include source files (.md, .py, .html) without any build artifacts, dependencies, or temporary files that should be ignored.
-playerdata.json
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Dependencies
+.venv/
+venv/
+node_modules/
+
+# Build artifacts
+dist/
+build/
+target/
+```
