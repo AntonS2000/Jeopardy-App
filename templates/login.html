@@ -40,8 +40,8 @@
         <label class="form-label">Роль</label>
         <select name="role" id="role" class="form-select" required onchange="toggleAccessCode()">
           <option value="">Выберите роль...</option>
-          <option value="Администратор" {% if request.form.role == 'Администратор' %}selected{% endif %}>Администратор</option>
           <option value="Игрок" {% if request.form.role == 'Игрок' %}selected{% endif %}>Игрок</option>
+          <option value="Администратор" {% if request.form.role == 'Администратор' %}selected{% endif %}>Администратор</option>
         </select>
       </div>
       <div class="mb-3" id="access_code_group" style="display: none;">

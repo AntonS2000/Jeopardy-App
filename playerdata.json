@@ -1,22 +1,18 @@
 {
-  "current_game_code": "SOS-98278",
+  "current_game_code": "EOS-73054",
   "sessions": {
-    "SOS-98278": {
+    "EOS-73054": {
       "11111": {
-        "name": "Михаил",
-        "token": "1b1a41a0-00c8-41a1-b891-6a1ad7dfa84a",
-        "connected": false
+        "name": "111",
+        "token": "c3ebf3dc-3704-4b54-9a64-ab968eb69c82",
+        "connected": true
       },
       "22222": {
-        "name": "000",
-        "token": "69a794dd-409b-4d4c-9fd1-434379d7ac8f",
-        "connected": false
+        "name": "Андрей",
+        "token": "ab9c3cf9-b36f-4509-a32e-9ef0347ac5b6",
+        "connected": true
       },
-      "33333": {
-        "name": "Александр",
-        "token": "897f0780-5920-45d0-b0c5-705b892473f3",
-        "connected": false
-      }
+      "33333": null
     }
   }
 }
