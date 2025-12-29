@@ -1,3 +1,2 @@
 Nothing needs to be added to .gitignore as the changes only include source files (.md, .py, .html) without any build artifacts, dependencies, or temporary files that should be ignored.
 playerdata.json
-playerdata.json
