@@ -77,6 +77,12 @@
           <div id="green_{{slot}}" class="green-indicator"></div>
           <div id="yellow_{{slot}}" class="yellow-indicator"></div>
         </div>
+        <div class="mt-2">
+          <div class="input-group">
+            <span class="input-group-text">Очки:</span>
+            <input type="text" id="score_{{slot}}" class="form-control text-center" value="0" readonly>
+          </div>
+        </div>
       </div>
     </div>
     {% endfor %}
@@ -142,6 +148,22 @@
       });
     }
     
+    // Функция для обновления очков игроков
+    function updatePlayerScores() {
+      // Загружаем данные из playerdata.json через AJAX
+      fetch('/get_player_scores')
+        .then(response => response.json())
+        .then(data => {
+          ["11111","22222","33333"].forEach(s => {
+            const scoreElement = document.getElementById("score_" + s);
+            if (scoreElement && data.scores && data.scores[s]) {
+              scoreElement.value = data.scores[s].total || 0;
+            }
+          });
+        })
+        .catch(error => console.error('Ошибка при загрузке очков:', error));
+    }
+    
     function sendSignal() {
       if (!signalButtonActive) return; // Не отправляем сигнал, если кнопка заблокирована
       
@@ -162,6 +184,9 @@
         name: playerName,
         token: playerToken
       });
+      
+      // Загружаем начальные значения очков
+      updatePlayerScores();
     });
 
     socket.on("player_update", data => {
@@ -203,6 +228,14 @@
       // Разблокируем кнопку, если это текущий игрок
       if (data.players.includes(playerId)) {
         updateSignalButton(false);
+      }
+    });
+    
+    // Обработка обновления очков
+    socket.on("score_updated", data => {
+      const scoreElement = document.getElementById("score_" + data.slot);
+      if (scoreElement) {
+        scoreElement.value = data.total || 0;
       }
     });
 
