@@ -53,10 +53,11 @@
   </div>
 
   <div class="row mt-3 text-center">
-    {% for slot in ["11111","22222","33333"] %}
+    {% for slot in ["1","2","3"] %}
     <div class="col">
       <div class="card p-3">
-        <h5 id="name_{{slot}}">Игрок {{slot}}</h5>
+        <!-- <h5 id="name_{{slot}}">Игрок {{slot}}</h5> -->
+        <h5 id="name_{{slot}}">Игрок №{{slot}}</h5>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
         <div class="indicator-container">
           <div id="green_{{slot}}" class="green-indicator"></div>
