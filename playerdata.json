@@ -1,0 +1,41 @@
+{
+  "current_game_code": null,
+  "sessions": {
+    "DUA-32344": {
+      "11111": null,
+      "22222": null,
+      "33333": null
+    }
+  },
+  "start_time": null,
+  "end_time": "2026-01-07T17:33:36.972630",
+  "scores": {
+    "11111": {
+      "rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "total": 0
+    },
+    "22222": {
+      "rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "total": 0
+    },
+    "33333": {
+      "rounds": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "total": 0
+    }
+  }
+}
