@@ -56,7 +56,6 @@
     {% for slot in ["1","2","3"] %}
     <div class="col">
       <div class="card p-3">
-        <!-- <h5 id="name_{{slot}}">Игрок {{slot}}</h5> -->
         <h5 id="name_{{slot}}">Игрок №{{slot}}</h5>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
         <div class="indicator-container">
@@ -130,7 +129,7 @@
 
     function setIndicator(slot, on, name) {
       document.getElementById("ind_" + slot).style.backgroundColor = on ? "darkgreen" : "white";
-      document.getElementById("name_" + slot).textContent = name ? name : "Игрок " + slot;
+      document.getElementById("name_" + slot).textContent = name ? name : "Игрок №" + slot;
     }
     
     function adjustScore(slot, operation) {
@@ -164,7 +163,7 @@
     
     function setScoreValue(value) {
       // Set the value in all score input fields
-      ["11111", "22222", "33333"].forEach(slot => {
+      ["1", "2", "3"].forEach(slot => {
         const scoreInput = document.getElementById("score_input_" + slot);
         if (scoreInput) {
           scoreInput.value = value;
@@ -174,7 +173,7 @@
 
     function updateAdminIndicators(data) {
       const slots = data.slots || {};
-      ["11111","22222","33333"].forEach(s => {
+      ["1","2","3"].forEach(s => {
         setIndicator(s, !!slots[s], slots[s]);
         // Обновляем индикаторы доступности
         const greenIndicator = document.getElementById("green_" + s);
@@ -207,7 +206,7 @@
       fetch('/get_player_scores')
         .then(response => response.json())
         .then(data => {
-          ["11111","22222","33333"].forEach(s => {
+          ["1","2","3"].forEach(s => {
             const scoreElement = document.getElementById("score_" + s);
             if (scoreElement && data.scores && data.scores[s]) {
               scoreElement.value = data.scores[s].total || 0;
@@ -237,7 +236,7 @@
     // Обработка разблокировки сигнала
     socket.on("signal_unlocked", data => {
       // Сбрасываем желтый индикатор для всех слотов
-      ["11111","22222","33333"].forEach(s => {
+      ["1","2","3"].forEach(s => {
         const yellowIndicator = document.getElementById("yellow_" + s);
         yellowIndicator.classList.remove("active");
       });
@@ -254,7 +253,7 @@
     socket.on("code_updated", data => {
       currentCode = data.code || "";
       document.getElementById("game_code").value = currentCode;
-      ["11111","22222","33333"].forEach(s => setIndicator(s, false));
+      ["1","2","3"].forEach(s => setIndicator(s, false));
       socket.emit("admin_join", { code: currentCode });
     });
 

@@ -68,10 +68,10 @@
   <h1>Панель игрока</h1>
   
   <div class="row mt-3">
-    {% for slot in ["11111","22222","33333"] %}
+    {% for slot in ["1","2","3"] %}
     <div class="col">
       <div class="card p-3">
-        <h5 id="name_{{slot}}">Игрок {{slot}}</h5>
+        <h5 id="name_{{slot}}">Игрок №{{slot}}</h5>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
         <div class="indicator-container">
           <div id="green_{{slot}}" class="green-indicator"></div>
@@ -109,7 +109,7 @@
     
     function setIndicator(slot, on, name) {
       document.getElementById("ind_" + slot).style.backgroundColor = on ? "darkgreen" : "white";
-      document.getElementById("name_" + slot).textContent = name ? name : "Игрок " + slot;
+      document.getElementById("name_" + slot).textContent = name ? name : "Игрок №" + slot;
     }
     
     function updateSignalButton(disabled, isWinner = false) {
@@ -132,7 +132,7 @@
     
     function updatePlayerIndicators(data) {
       const slots = data.slots || {};
-      ["11111","22222","33333"].forEach(s => {
+      ["1","2","3"].forEach(s => {
         setIndicator(s, !!slots[s], slots[s]);
         // Обновляем индикаторы доступности
         const greenIndicator = document.getElementById("green_" + s);
@@ -155,7 +155,7 @@
       fetch('/get_player_scores')
         .then(response => response.json())
         .then(data => {
-          ["11111","22222","33333"].forEach(s => {
+          ["1","2","3"].forEach(s => {
             const scoreElement = document.getElementById("score_" + s);
             if (scoreElement && data.scores && data.scores[s]) {
               scoreElement.value = data.scores[s].total || 0;
@@ -222,7 +222,7 @@
     // Обработка разблокировки сигнала администратором
     socket.on("signal_unlocked", data => {
       // Сбрасываем все желтые индикаторы
-      ["11111","22222","33333"].forEach(s => {
+      ["1","2","3"].forEach(s => {
         const yellowIndicator = document.getElementById("yellow_" + s);
         yellowIndicator.classList.remove("active");
       });
