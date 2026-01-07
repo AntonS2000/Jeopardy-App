@@ -1,4 +1,5 @@
 import json, random, string, os, uuid
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, session, flash
 from flask_socketio import SocketIO, emit, join_room, leave_room
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -8,62 +9,276 @@ app.secret_key = "secret"
 app.wsgi_app = ProxyFix(app.wsgi_app)
 socketio = SocketIO(app, async_mode="threading")
 
-playerdata_file = "playerdata.json"
+# Database configuration
+DATABASE = "game_data.db"
+
+# Separate valid slots (identifiers) from passwords
+valid_slots = ["1", "2", "3"]  # These are the slot identifiers
+passwords = ["11111", "22222", "33333"]  # These are the actual passwords for login
+
 current_game_code = None
-game_state = {}  # { code: { "11111": {"sid":..., "name":...} или None } }
+game_state = {}  # { code: { "1": {"sid":..., "name":...} или None } }
 socket_registry = {}
-valid_slots = ["11111", "22222", "33333"]
+
+def init_db():
+    """Initialize the SQLite database with required tables."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Create table for game sessions and player data
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS game_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_code TEXT UNIQUE,
+            current_game_code TEXT,
+            start_time TEXT,
+            end_time TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # Create table for player data
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_code TEXT,
+            slot_id TEXT,
+            name TEXT,
+            token TEXT,
+            connected BOOLEAN DEFAULT 0,
+            red_button_state BOOLEAN DEFAULT 0,
+            FOREIGN KEY (game_code) REFERENCES game_sessions (game_code),
+            UNIQUE (game_code, slot_id)
+        )
+    ''')
+    
+    # Create table for scores
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS scores (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_code TEXT,
+            slot_id TEXT,
+            round_number INTEGER,  -- 0-3 for 4 rounds
+            round_score INTEGER DEFAULT 0,
+            total_score INTEGER DEFAULT 0,
+            FOREIGN KEY (game_code) REFERENCES game_sessions (game_code),
+            UNIQUE (game_code, slot_id, round_number)
+        )
+    ''')
+    
+    # Create table for historical game data (preserved after game ends)
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS historical_games (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            game_code TEXT,
+            slot_id TEXT,
+            name TEXT,
+            final_total_score INTEGER,
+            start_time TEXT,
+            end_time TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
 
 def save_playerdata(data):
-    with open(playerdata_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    # This function is deprecated with SQLite implementation
+    pass
 
-# Инициализация playerdata.json с начальной структурой
-def initialize_playerdata():
-    if not os.path.exists(playerdata_file):
-        initial_data = {
-            "current_game_code": None,
-            "sessions": {},
-            "start_time": None,
-            "end_time": None
-        }
-        save_playerdata(initial_data)
+# Initialize database at startup
+init_db()
 
-# Вызываем инициализацию при запуске
-initialize_playerdata()
-
-# ===== Работа с файлом playerdata.json =====
+# ===== SQLite Database Functions =====
 def load_playerdata():
-    try:
-        with open(playerdata_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError, ValueError):
-        data = {}
-
-    # Гарантируем наличие всех обязательных структур
-    if "current_game_code" not in data or data["current_game_code"] is None:
-        data["current_game_code"] = None
-    if "sessions" not in data or not isinstance(data["sessions"], dict):
-        data["sessions"] = {}
-    if "start_time" not in data:
-        data["start_time"] = None
-    if "end_time" not in data:
-        data["end_time"] = None
-    if "scores" not in data or not isinstance(data["scores"], dict):
-        data["scores"] = {}
-        # Инициализируем структуру очков для всех слотов
-        for slot in valid_slots:
-            if slot not in data["scores"]:
-                data["scores"][slot] = {
-                    "rounds": [0, 0, 0, 0],  # 4 раунда
-                    "total": 0  # Общий счет
+    """Load player data from SQLite database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Get current game session
+    cursor.execute("SELECT game_code, current_game_code, start_time, end_time FROM game_sessions ORDER BY id DESC LIMIT 1")
+    session_row = cursor.fetchone()
+    
+    result = {
+        "current_game_code": None,
+        "sessions": {},
+        "start_time": None,
+        "end_time": None,
+        "scores": {}
+    }
+    
+    if session_row:
+        game_code, current_game_code, start_time, end_time = session_row
+        result["current_game_code"] = current_game_code
+        result["start_time"] = start_time
+        result["end_time"] = end_time
+        
+        # Load player sessions
+        cursor.execute("SELECT slot_id, name, token, connected FROM players WHERE game_code = ?", (game_code,))
+        players = cursor.fetchall()
+        
+        sessions = {}
+        if game_code:
+            # Initialize all slots for this game
+            sessions[game_code] = {slot: None for slot in valid_slots}
+            
+            for slot_id, name, token, connected in players:
+                sessions[game_code][slot_id] = {
+                    "name": name,
+                    "token": token,
+                    "connected": bool(connected)
                 }
+        
+        result["sessions"] = sessions
+        
+        # Load scores
+        cursor.execute("SELECT slot_id, round_number, round_score, total_score FROM scores WHERE game_code = ?", (game_code,))
+        scores_data = cursor.fetchall()
+        
+        # Initialize scores structure
+        scores = {}
+        for slot in valid_slots:
+            scores[slot] = {
+                "rounds": [0, 0, 0, 0],  # 4 rounds
+                "total": 0
+            }
+        
+        # Populate scores from database
+        for slot_id, round_num, round_score, total_score in scores_data:
+            if slot_id in scores:
+                if 0 <= round_num < 4:
+                    scores[slot_id]["rounds"][round_num] = round_score
+                scores[slot_id]["total"] = total_score
+        
+        result["scores"] = scores
+    
+    conn.close()
+    return result
 
-    return data
+def update_game_session(game_code, current_game_code=None, start_time=None, end_time=None):
+    """Update or create a game session in the database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Check if game session already exists
+    cursor.execute("SELECT id FROM game_sessions WHERE game_code = ?", (game_code,))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing session
+        cursor.execute("""
+            UPDATE game_sessions 
+            SET current_game_code = COALESCE(?, current_game_code),
+                start_time = COALESCE(?, start_time),
+                end_time = COALESCE(?, end_time)
+            WHERE game_code = ?
+        """, (current_game_code, start_time, end_time, game_code))
+    else:
+        # Create new session
+        cursor.execute("""
+            INSERT INTO game_sessions (game_code, current_game_code, start_time, end_time)
+            VALUES (?, ?, ?, ?)
+        """, (game_code, current_game_code, start_time, end_time))
+    
+    conn.commit()
+    conn.close()
 
-def save_playerdata(data):
-    with open(playerdata_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+def update_player_session(game_code, slot_id, name=None, token=None, connected=None):
+    """Update or create a player session in the database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Check if player session already exists
+    cursor.execute("SELECT id FROM players WHERE game_code = ? AND slot_id = ?", (game_code, slot_id))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing player
+        if connected is not None:
+            cursor.execute("""
+                UPDATE players 
+                SET name = COALESCE(?, name),
+                    token = COALESCE(?, token),
+                    connected = ?
+                WHERE game_code = ? AND slot_id = ?
+            """, (name, token, connected, game_code, slot_id))
+        else:
+            cursor.execute("""
+                UPDATE players 
+                SET name = COALESCE(?, name),
+                    token = COALESCE(?, token)
+                WHERE game_code = ? AND slot_id = ?
+            """, (name, token, game_code, slot_id))
+    else:
+        # Create new player
+        cursor.execute("""
+            INSERT INTO players (game_code, slot_id, name, token, connected)
+            VALUES (?, ?, ?, ?, ?)
+        """, (game_code, slot_id, name, token, connected or False))
+    
+    conn.commit()
+    conn.close()
+
+def update_score(game_code, slot_id, round_number, round_score=None, total_score=None):
+    """Update or create a score record in the database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Check if score record already exists
+    cursor.execute("SELECT id FROM scores WHERE game_code = ? AND slot_id = ? AND round_number = ?", 
+                   (game_code, slot_id, round_number))
+    existing = cursor.fetchone()
+    
+    if existing:
+        # Update existing score
+        cursor.execute("""
+            UPDATE scores 
+            SET round_score = COALESCE(?, round_score),
+                total_score = COALESCE(?, total_score)
+            WHERE game_code = ? AND slot_id = ? AND round_number = ?
+        """, (round_score, total_score, game_code, slot_id, round_number))
+    else:
+        # Create new score record
+        cursor.execute("""
+            INSERT INTO scores (game_code, slot_id, round_number, round_score, total_score)
+            VALUES (?, ?, ?, ?, ?)
+        """, (game_code, slot_id, round_number, round_score or 0, total_score or 0))
+    
+    conn.commit()
+    conn.close()
+
+def save_game_to_history(game_code):
+    """Save the current game data to historical records."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Get current game session info
+    cursor.execute("SELECT start_time, end_time FROM game_sessions WHERE game_code = ?", (game_code,))
+    session_info = cursor.fetchone()
+    
+    if session_info:
+        start_time, end_time = session_info
+        
+        # Get all players in this game
+        cursor.execute("SELECT slot_id, name FROM players WHERE game_code = ?", (game_code,))
+        players = cursor.fetchall()
+        
+        # Get final scores for each player
+        for slot_id, name in players:
+            cursor.execute("SELECT total_score FROM scores WHERE game_code = ? AND slot_id = ? ORDER BY round_number DESC LIMIT 1", 
+                          (game_code, slot_id))
+            score_row = cursor.fetchone()
+            final_total_score = score_row[0] if score_row else 0
+            
+            # Insert into historical games
+            cursor.execute("""
+                INSERT INTO historical_games (game_code, slot_id, name, final_total_score, start_time, end_time)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (game_code, slot_id, name, final_total_score, start_time, end_time))
+    
+    conn.commit()
+    conn.close()
 
 # ===== Утилиты =====
 def generate_code():
@@ -96,9 +311,15 @@ def login():
             if current_game_code is None or access_code != current_game_code:
                 flash("Неверный код доступа или сеанс не активен")
                 return redirect(url_for("login"))
-            if password not in valid_slots:
+            
+            # Map password to slot ID
+            if password not in passwords:
                 flash("Неверный пароль игрока")
                 return redirect(url_for("login"))
+            
+            # Find the corresponding slot ID
+            password_index = passwords.index(password)
+            slot_id = valid_slots[password_index]
 
             ensure_code_state(current_game_code)
             pdata = load_playerdata()
@@ -108,7 +329,7 @@ def login():
                 pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
                 save_playerdata(pdata)
 
-            slot_info = pdata["sessions"][current_game_code][password]
+            slot_info = pdata["sessions"][current_game_code][slot_id]
 
             # Проверка: занят ли слот другим игроком
             if slot_info and slot_info.get("connected"):
@@ -125,7 +346,7 @@ def login():
                 player_token = slot_info["token"]
             else:
                 player_token = str(uuid.uuid4())
-                pdata["sessions"][current_game_code][password] = {
+                pdata["sessions"][current_game_code][slot_id] = {
                     "name": login_val,
                     "token": player_token,
                     "connected": False
@@ -134,11 +355,11 @@ def login():
 
             session.clear()
             session["role"] = "player"
-            session["player_id"] = password
+            session["player_id"] = slot_id
             session["player_name"] = login_val
             session["code"] = current_game_code
             session["player_token"] = player_token
-            return redirect(url_for("player", player_id=password))
+            return redirect(url_for("player", player_id=slot_id))
 
     return render_template("login.html")
 
@@ -169,13 +390,17 @@ def generate_code_route():
     ensure_code_state(code)
     game_state[code] = {s: None for s in valid_slots}
 
-    pdata = load_playerdata()
-    # Инициализируем sessions как словарь, если нужно
-    if not isinstance(pdata.get("sessions"), dict):
-        pdata["sessions"] = {}
-    pdata["current_game_code"] = code
-    pdata["sessions"][code] = {s: None for s in valid_slots}
-    save_playerdata(pdata)
+    # Initialize game session in database
+    update_game_session(game_code=code, current_game_code=code)
+
+    # Initialize player sessions in database
+    for slot in valid_slots:
+        update_player_session(game_code=code, slot_id=slot, name=None, token=None, connected=False)
+
+    # Initialize scores in database
+    for slot in valid_slots:
+        for round_num in range(4):  # 4 rounds
+            update_score(game_code=code, slot_id=slot, round_number=round_num, round_score=0, total_score=0)
 
     socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
@@ -185,14 +410,17 @@ def generate_code_route():
 def start_game():
     global current_game_code
     if current_game_code:
-        pdata = load_playerdata()
         from datetime import datetime
-        pdata["start_time"] = datetime.now().isoformat()
-        # Сбросим очки при начале игры
+        start_time = datetime.now().isoformat()
+        
+        # Update game session with start time
+        update_game_session(game_code=current_game_code, start_time=start_time)
+        
+        # Reset scores for all slots and rounds
         for slot in valid_slots:
-            pdata["scores"][slot]["rounds"] = [0, 0, 0, 0]
-            pdata["scores"][slot]["total"] = 0
-        save_playerdata(pdata)
+            for round_num in range(4):  # 4 rounds
+                update_score(game_code=current_game_code, slot_id=slot, 
+                           round_number=round_num, round_score=0, total_score=0)
     return redirect(url_for("admin"))
 
 @app.route("/restore_code", methods=["POST"])
@@ -203,10 +431,7 @@ def restore_code_route():
     if code:
         current_game_code = code
         ensure_code_state(code)
-        # Инициализация, если отсутствует
-        if code not in pdata["sessions"]:
-            pdata["sessions"][code] = {s: None for s in valid_slots}
-            save_playerdata(pdata)
+        # Initialize if missing
         socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
 
@@ -218,18 +443,17 @@ def end_session():
         socketio.emit("session_ended", room=room)
         game_state[current_game_code] = {s: None for s in valid_slots}
 
-        pdata = load_playerdata()
-        if not isinstance(pdata.get("sessions"), dict):
-            pdata["sessions"] = {}
-        if current_game_code in pdata["sessions"]:
-            pdata["sessions"][current_game_code] = {s: None for s in valid_slots}
-        pdata["current_game_code"] = None
+        # Save game data to history before clearing
+        save_game_to_history(current_game_code)
         
-        # Установить время окончания сессии
+        # Update game session with end time
         from datetime import datetime
-        pdata["end_time"] = datetime.now().isoformat()
+        end_time = datetime.now().isoformat()
+        update_game_session(game_code=current_game_code, end_time=end_time)
         
-        save_playerdata(pdata)
+        # Disconnect all players
+        for slot in valid_slots:
+            update_player_session(game_code=current_game_code, slot_id=slot, connected=False)
 
         current_game_code = None
         socketio.emit("code_updated", {"code": None})
@@ -241,20 +465,21 @@ def room_snapshot():
     if not code:
         return {"slots": {}}
 
-    pdata = load_playerdata()
-    # Защита от отсутствия ключа
-    sessions = pdata.get("sessions", {})
-    if not isinstance(sessions, dict) or code not in sessions:
-        return {"slots": {s: None for s in valid_slots}}
-
-    current_sessions = sessions[code]
-    if not isinstance(current_sessions, dict):
-        current_sessions = {s: None for s in valid_slots}
-
-    snapshot = {}
-    for s in valid_slots:
-        info = current_sessions.get(s)
-        snapshot[s] = info["name"] if info and info.get("connected") else None
+    # Load player sessions from database
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT slot_id, name, connected FROM players WHERE game_code = ?", (code,))
+    players = cursor.fetchall()
+    
+    conn.close()
+    
+    # Create snapshot dictionary
+    snapshot = {s: None for s in valid_slots}
+    
+    for slot_id, name, connected in players:
+        if slot_id in valid_slots and connected:
+            snapshot[slot_id] = name
 
     return {"slots": snapshot}
 
@@ -263,18 +488,14 @@ def logout_player():
     player_id = session.get("player_id")
     code = session.get("code")
     if code and player_id:
-        pdata = load_playerdata()
-        sessions = pdata.get("sessions", {})
-        if isinstance(sessions, dict) and code in sessions:
-            slot_data = sessions[code].get(player_id)
-            if isinstance(slot_data, dict):
-                slot_data["connected"] = False
-                save_playerdata(pdata)
-                socketio.emit("player_update", {
-                    "player_id": player_id,
-                    "status": False,
-                    "name": None
-                }, room=code)
+        # Update player session in database
+        update_player_session(game_code=code, slot_id=player_id, connected=False)
+        
+        socketio.emit("player_update", {
+            "player_id": player_id,
+            "status": False,
+            "name": None
+        }, room=code)
     session.clear()
     return redirect(url_for("login"))
 
