@@ -20,9 +20,19 @@ current_game_code = None
 game_state = {}  # { code: { "1": {"sid":..., "name":...} или None } }
 socket_registry = {}
 
+def get_db_connection():
+    """Get a thread-safe database connection with proper settings."""
+    conn = sqlite3.connect(DATABASE, check_same_thread=False, timeout=20.0)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA cache_size=1000;")
+    conn.execute("PRAGMA temp_store=MEMORY;")
+    return conn
+
+
 def init_db():
     """Initialize the SQLite database with required tables."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Drop the historical_games table if it exists (as requested)
@@ -77,7 +87,7 @@ def init_db():
 
 def save_playerdata(data):
     """Save player data to SQLite database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Save current game code
@@ -124,7 +134,7 @@ init_db()
 # ===== SQLite Database Functions =====
 def load_playerdata():
     """Load player data from SQLite database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Get current game session
@@ -190,7 +200,7 @@ def load_playerdata():
 
 def update_game_session(game_code, current_game_code=None, start_time=None, end_time=None):
     """Update or create a game session in the database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Check if game session already exists
@@ -218,7 +228,7 @@ def update_game_session(game_code, current_game_code=None, start_time=None, end_
 
 def update_red_button_state(game_code, slot_id, red_button_state):
     """Update the red button state for a specific player in the database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Update the red button state for the player
@@ -234,7 +244,7 @@ def update_red_button_state(game_code, slot_id, red_button_state):
 
 def update_player_session(game_code, slot_id, name=None, token=None, connected=None, red_button_state=None):
     """Update or create a player session in the database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Check if player session already exists
@@ -275,7 +285,7 @@ def update_player_session(game_code, slot_id, name=None, token=None, connected=N
 
 def update_score(game_code, slot_id, round_number, round_score=None, total_score=None, round_name=None, final_bet=None, final_bet_result=None):
     """Update or create a score record in the database."""
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     # Check if score record already exists
@@ -303,6 +313,15 @@ def update_score(game_code, slot_id, round_number, round_score=None, total_score
     
     conn.commit()
     conn.close()
+
+
+def save_game_to_history(game_code):
+    """Save game data to history by copying from existing tables."""
+    # В текущей реализации мы просто оставляем функцию пустой,
+    # так как таблица historical_games была удалена по требованию
+    # В реальной ситуации можно было бы переместить данные в архивную таблицу
+    # или сохранить в JSON-файл для архивации
+    pass
 
 
 # ===== Утилиты =====
@@ -495,7 +514,7 @@ def room_snapshot():
         return {"slots": {}}
 
     # Load player sessions from database
-    conn = sqlite3.connect(DATABASE)
+    conn = get_db_connection()
     cursor = conn.cursor()
     
     cursor.execute("SELECT slot_id, name, connected FROM players WHERE game_code = ?", (code,))
