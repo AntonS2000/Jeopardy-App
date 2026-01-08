@@ -25,6 +25,9 @@ def init_db():
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
     
+    # Drop the historical_games table if it exists (as requested)
+    cursor.execute("DROP TABLE IF EXISTS historical_games")
+    
     # Create table for game sessions and player data
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS game_sessions (
@@ -66,26 +69,46 @@ def init_db():
         )
     ''')
     
-    # Create table for historical game data (preserved after game ends)
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS historical_games (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            game_code TEXT,
-            slot_id TEXT,
-            name TEXT,
-            final_total_score INTEGER,
-            start_time TEXT,
-            end_time TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
     conn.commit()
     conn.close()
 
 def save_playerdata(data):
-    # This function is deprecated with SQLite implementation
-    pass
+    """Save player data to SQLite database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Save current game code
+    current_game_code = data.get("current_game_code")
+    if current_game_code:
+        update_game_session(game_code=current_game_code, current_game_code=current_game_code)
+    
+    # Save session data
+    sessions = data.get("sessions", {})
+    if current_game_code in sessions:
+        for slot_id, player_info in sessions[current_game_code].items():
+            if player_info:
+                update_player_session(
+                    game_code=current_game_code,
+                    slot_id=slot_id,
+                    name=player_info.get("name"),
+                    token=player_info.get("token"),
+                    connected=player_info.get("connected", False)
+                )
+    
+    # Save scores
+    scores = data.get("scores", {})
+    for slot_id, score_data in scores.items():
+        if "rounds" in score_data and "total" in score_data:
+            for round_num, round_score in enumerate(score_data["rounds"]):
+                update_score(
+                    game_code=current_game_code,
+                    slot_id=slot_id,
+                    round_number=round_num,
+                    round_score=round_score,
+                    total_score=score_data["total"]
+                )
+    
+    conn.close()
 
 # Initialize database at startup
 init_db()
@@ -115,7 +138,7 @@ def load_playerdata():
         result["end_time"] = end_time
         
         # Load player sessions
-        cursor.execute("SELECT slot_id, name, token, connected FROM players WHERE game_code = ?", (game_code,))
+        cursor.execute("SELECT slot_id, name, token, connected, red_button_state FROM players WHERE game_code = ?", (game_code,))
         players = cursor.fetchall()
         
         sessions = {}
@@ -123,11 +146,12 @@ def load_playerdata():
             # Initialize all slots for this game
             sessions[game_code] = {slot: None for slot in valid_slots}
             
-            for slot_id, name, token, connected in players:
+            for slot_id, name, token, connected, red_button_state in players:
                 sessions[game_code][slot_id] = {
                     "name": name,
                     "token": token,
-                    "connected": bool(connected)
+                    "connected": bool(connected),
+                    "red_button_state": bool(red_button_state)
                 }
         
         result["sessions"] = sessions
@@ -184,7 +208,23 @@ def update_game_session(game_code, current_game_code=None, start_time=None, end_
     conn.commit()
     conn.close()
 
-def update_player_session(game_code, slot_id, name=None, token=None, connected=None):
+def update_red_button_state(game_code, slot_id, red_button_state):
+    """Update the red button state for a specific player in the database."""
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    
+    # Update the red button state for the player
+    cursor.execute("""
+        UPDATE players 
+        SET red_button_state = ?
+        WHERE game_code = ? AND slot_id = ?
+    """, (red_button_state, game_code, slot_id))
+    
+    conn.commit()
+    conn.close()
+
+
+def update_player_session(game_code, slot_id, name=None, token=None, connected=None, red_button_state=None):
     """Update or create a player session in the database."""
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -195,27 +235,32 @@ def update_player_session(game_code, slot_id, name=None, token=None, connected=N
     
     if existing:
         # Update existing player
+        update_fields = []
+        params = []
+        
+        if name is not None:
+            update_fields.append("name = ?")
+            params.append(name)
+        if token is not None:
+            update_fields.append("token = ?")
+            params.append(token)
         if connected is not None:
-            cursor.execute("""
-                UPDATE players 
-                SET name = COALESCE(?, name),
-                    token = COALESCE(?, token),
-                    connected = ?
-                WHERE game_code = ? AND slot_id = ?
-            """, (name, token, connected, game_code, slot_id))
-        else:
-            cursor.execute("""
-                UPDATE players 
-                SET name = COALESCE(?, name),
-                    token = COALESCE(?, token)
-                WHERE game_code = ? AND slot_id = ?
-            """, (name, token, game_code, slot_id))
+            update_fields.append("connected = ?")
+            params.append(connected)
+        if red_button_state is not None:
+            update_fields.append("red_button_state = ?")
+            params.append(red_button_state)
+        
+        if update_fields:
+            sql = f"UPDATE players SET {', '.join(update_fields)} WHERE game_code = ? AND slot_id = ?"
+            params.extend([game_code, slot_id])
+            cursor.execute(sql, params)
     else:
         # Create new player
         cursor.execute("""
-            INSERT INTO players (game_code, slot_id, name, token, connected)
-            VALUES (?, ?, ?, ?, ?)
-        """, (game_code, slot_id, name, token, connected or False))
+            INSERT INTO players (game_code, slot_id, name, token, connected, red_button_state)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (game_code, slot_id, name, token, connected or False, red_button_state or False))
     
     conn.commit()
     conn.close()
@@ -248,37 +293,6 @@ def update_score(game_code, slot_id, round_number, round_score=None, total_score
     conn.commit()
     conn.close()
 
-def save_game_to_history(game_code):
-    """Save the current game data to historical records."""
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    
-    # Get current game session info
-    cursor.execute("SELECT start_time, end_time FROM game_sessions WHERE game_code = ?", (game_code,))
-    session_info = cursor.fetchone()
-    
-    if session_info:
-        start_time, end_time = session_info
-        
-        # Get all players in this game
-        cursor.execute("SELECT slot_id, name FROM players WHERE game_code = ?", (game_code,))
-        players = cursor.fetchall()
-        
-        # Get final scores for each player
-        for slot_id, name in players:
-            cursor.execute("SELECT total_score FROM scores WHERE game_code = ? AND slot_id = ? ORDER BY round_number DESC LIMIT 1", 
-                          (game_code, slot_id))
-            score_row = cursor.fetchone()
-            final_total_score = score_row[0] if score_row else 0
-            
-            # Insert into historical games
-            cursor.execute("""
-                INSERT INTO historical_games (game_code, slot_id, name, final_total_score, start_time, end_time)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (game_code, slot_id, name, final_total_score, start_time, end_time))
-    
-    conn.commit()
-    conn.close()
 
 # ===== Утилиты =====
 def generate_code():
@@ -506,7 +520,7 @@ def on_connect():
 
 
 @app.route("/update_score", methods=["POST"])
-def update_score():
+def update_score_http():
     slot = request.form.get("slot")
     points = request.form.get("points", type=int)
     operation = request.form.get("operation")  # "add" or "subtract"
@@ -518,7 +532,8 @@ def update_score():
             if operation == "add":
                 pdata["scores"][slot]["total"] += points
             elif operation == "subtract":
-                pdata["scores"][slot]["total"] = max(0, pdata["scores"][slot]["total"] - points)
+                # Allow negative scores - don't use max(0, ...)
+                pdata["scores"][slot]["total"] -= points
             
             save_playerdata(pdata)
     
@@ -551,9 +566,11 @@ def handle_update_player_score(data):
             elif operation == "subtract":
                 # Update round score if round is specified
                 if 0 <= round_number < 4:
-                    pdata["scores"][slot]["rounds"][round_number] = max(0, pdata["scores"][slot]["rounds"][round_number] - points)
+                    # Allow negative scores
+                    pdata["scores"][slot]["rounds"][round_number] -= points
                 # Update total score
-                pdata["scores"][slot]["total"] = max(0, pdata["scores"][slot]["total"] - points)
+                # Allow negative scores - don't use max(0, ...)
+                pdata["scores"][slot]["total"] -= points
             
             save_playerdata(pdata)
             
@@ -825,10 +842,17 @@ def auto_unlock_signal(code):
     global active_signal
     # Проверяем, что сигнал всё ещё активен и относится к той же игре
     if active_signal["active"] and active_signal["code"] == code:
+        # Get the player who activated the signal to reset their red button state
+        player_id = active_signal["player_id"]
+        
         # Сбрасываем активный сигнал
         active_signal["code"] = None
         active_signal["player_id"] = None
         active_signal["active"] = False
+        
+        # Reset the red button state for the player in database
+        if player_id:
+            update_red_button_state(game_code=code, slot_id=player_id, red_button_state=False)
 
         # Отправляем сигнал разблокировки всем участникам комнаты
         emit("signal_unlocked", {
