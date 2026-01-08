@@ -1,3 +1,2 @@
-server.py appears to be a source code file that was modified, and there are no build artifacts, dependency directories, or temporary files in the change list that need to be ignored.
-
-(empty — output nothing)
+game_data.db
+game_data.db-journal
