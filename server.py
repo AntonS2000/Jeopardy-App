@@ -473,7 +473,7 @@ def end_session():
         game_state[current_game_code] = {s: None for s in valid_slots}
 
         # Save game data to history before clearing
-        # save_game_to_history(current_game_code)
+        save_game_to_history(current_game_code)
         
         # Update game session with end time
         from datetime import datetime
