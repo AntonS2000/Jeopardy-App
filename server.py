@@ -61,9 +61,12 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             game_code TEXT,
             slot_id TEXT,
-            round_number INTEGER,  -- 0-3 for 4 rounds
+            round_number INTEGER,  -- 0-4 for 5 rounds (including shootout)
+            round_name TEXT,       -- Name of the round ("Раунд I", "Раунд II", etc.)
             round_score INTEGER DEFAULT 0,
             total_score INTEGER DEFAULT 0,
+            final_bet INTEGER DEFAULT NULL,  -- Bet amount in the final round
+            final_bet_result INTEGER DEFAULT NULL,  -- Result of the final bet
             FOREIGN KEY (game_code) REFERENCES game_sessions (game_code),
             UNIQUE (game_code, slot_id, round_number)
         )
@@ -100,12 +103,17 @@ def save_playerdata(data):
     for slot_id, score_data in scores.items():
         if "rounds" in score_data and "total" in score_data:
             for round_num, round_score in enumerate(score_data["rounds"]):
+                # Define round names
+                round_names = ["Раунд I", "Раунд II", "Раунд III", "Финальный раунд", "Перестрелка"]
+                round_name = round_names[round_num] if round_num < len(round_names) else f"Раунд {round_num + 1}"
+                
                 update_score(
                     game_code=current_game_code,
                     slot_id=slot_id,
                     round_number=round_num,
                     round_score=round_score,
-                    total_score=score_data["total"]
+                    total_score=score_data["total"],
+                    round_name=round_name
                 )
     
     conn.close()
@@ -164,14 +172,14 @@ def load_playerdata():
         scores = {}
         for slot in valid_slots:
             scores[slot] = {
-                "rounds": [0, 0, 0, 0],  # 4 rounds
+                "rounds": [0, 0, 0, 0, 0],  # 5 rounds (including shootout)
                 "total": 0
             }
         
         # Populate scores from database
         for slot_id, round_num, round_score, total_score in scores_data:
             if slot_id in scores:
-                if 0 <= round_num < 4:
+                if 0 <= round_num < 5:  # Now supporting 5 rounds
                     scores[slot_id]["rounds"][round_num] = round_score
                 scores[slot_id]["total"] = total_score
         
@@ -265,7 +273,7 @@ def update_player_session(game_code, slot_id, name=None, token=None, connected=N
     conn.commit()
     conn.close()
 
-def update_score(game_code, slot_id, round_number, round_score=None, total_score=None):
+def update_score(game_code, slot_id, round_number, round_score=None, total_score=None, round_name=None, final_bet=None, final_bet_result=None):
     """Update or create a score record in the database."""
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
@@ -280,15 +288,18 @@ def update_score(game_code, slot_id, round_number, round_score=None, total_score
         cursor.execute("""
             UPDATE scores 
             SET round_score = COALESCE(?, round_score),
-                total_score = COALESCE(?, total_score)
+                total_score = COALESCE(?, total_score),
+                round_name = COALESCE(?, round_name),
+                final_bet = COALESCE(?, final_bet),
+                final_bet_result = COALESCE(?, final_bet_result)
             WHERE game_code = ? AND slot_id = ? AND round_number = ?
-        """, (round_score, total_score, game_code, slot_id, round_number))
+        """, (round_score, total_score, round_name, final_bet, final_bet_result, game_code, slot_id, round_number))
     else:
         # Create new score record
         cursor.execute("""
-            INSERT INTO scores (game_code, slot_id, round_number, round_score, total_score)
-            VALUES (?, ?, ?, ?, ?)
-        """, (game_code, slot_id, round_number, round_score or 0, total_score or 0))
+            INSERT INTO scores (game_code, slot_id, round_number, round_name, round_score, total_score, final_bet, final_bet_result)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (game_code, slot_id, round_number, round_name, round_score or 0, total_score or 0, final_bet, final_bet_result))
     
     conn.commit()
     conn.close()
@@ -413,8 +424,10 @@ def generate_code_route():
 
     # Initialize scores in database
     for slot in valid_slots:
-        for round_num in range(4):  # 4 rounds
-            update_score(game_code=code, slot_id=slot, round_number=round_num, round_score=0, total_score=0)
+        for round_num in range(5):  # 5 rounds (including shootout)
+            round_names = ["Раунд I", "Раунд II", "Раунд III", "Финальный раунд", "Перестрелка"]
+            round_name = round_names[round_num] if round_num < len(round_names) else f"Раунд {round_num + 1}"
+            update_score(game_code=code, slot_id=slot, round_number=round_num, round_score=0, total_score=0, round_name=round_name)
 
     socketio.emit("code_updated", {"code": current_game_code})
     return redirect(url_for("admin"))
@@ -432,9 +445,11 @@ def start_game():
         
         # Reset scores for all slots and rounds
         for slot in valid_slots:
-            for round_num in range(4):  # 4 rounds
+            for round_num in range(5):  # 5 rounds (including shootout)
+                round_names = ["Раунд I", "Раунд II", "Раунд III", "Финальный раунд", "Перестрелка"]
+                round_name = round_names[round_num] if round_num < len(round_names) else f"Раунд {round_num + 1}"
                 update_score(game_code=current_game_code, slot_id=slot, 
-                           round_number=round_num, round_score=0, total_score=0)
+                           round_number=round_num, round_score=0, total_score=0, round_name=round_name)
     return redirect(url_for("admin"))
 
 @app.route("/restore_code", methods=["POST"])
@@ -551,7 +566,7 @@ def handle_update_player_score(data):
     slot = data.get("slot")
     points = data.get("points", 0)
     operation = data.get("operation")  # "add" or "subtract"
-    round_number = data.get("round", 0)  # 0-based index for rounds (0-3)
+    round_number = data.get("round", 0)  # 0-based index for rounds (0-4 now including shootout)
     
     if slot and points is not None and operation in ["add", "subtract"]:
         pdata = load_playerdata()
@@ -559,13 +574,13 @@ def handle_update_player_score(data):
         if slot in pdata["scores"]:
             if operation == "add":
                 # Update round score if round is specified
-                if 0 <= round_number < 4:
+                if 0 <= round_number < 5:  # Now supporting 5 rounds
                     pdata["scores"][slot]["rounds"][round_number] += points
                 # Update total score
                 pdata["scores"][slot]["total"] += points
             elif operation == "subtract":
                 # Update round score if round is specified
-                if 0 <= round_number < 4:
+                if 0 <= round_number < 5:  # Now supporting 5 rounds
                     # Allow negative scores
                     pdata["scores"][slot]["rounds"][round_number] -= points
                 # Update total score
@@ -877,6 +892,21 @@ def handle_admin_unlock_signal(data):
         emit("signal_unlocked", {
             "players": valid_slots  # Разблокируем кнопки для всех игроков
         }, room=code)
+
+
+@socketio.on("round_selected")
+def handle_round_selected(data):
+    """Handle round selection event from admin panel"""
+    code = data.get("code")
+    round_number = data.get("round_number")
+    round_name = data.get("round_name")
+    
+    # We can store this information or just acknowledge the selection
+    # For now, we'll just emit an event back to confirm the round selection
+    emit("round_selection_confirmed", {
+        "round_number": round_number,
+        "round_name": round_name
+    }, room=code)
 
 
 # ===== Запуск =====
