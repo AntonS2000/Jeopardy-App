@@ -37,6 +37,20 @@
   <h1 class="text-center">Панель администратора</h1>
 
   <div class="card p-3 mt-3">
+    <h5>Управление раундами</h5>
+    <div class="d-flex gap-2 mb-3">
+      <select id="roundSelect" class="form-select">
+        <option value="0">Раунд I</option>
+        <option value="1">Раунд II</option>
+        <option value="2">Раунд III</option>
+        <option value="3">Финальный раунд</option>
+        <option value="4">Перестрелка</option>
+      </select>
+      <button class="btn btn-primary" onclick="applyRound()">Применить</button>
+    </div>
+  </div>
+
+  <div class="card p-3 mt-3">
     <h5>Код доступа</h5>
     <div class="d-flex gap-2">
       <form method="POST" action="/generate_code">
@@ -57,6 +71,9 @@
     <div class="col">
       <div class="card p-3">
         <h5 id="name_{{slot}}">Игрок №{{slot}}</h5>
+        <div id="round_{{slot}}" class="text-center mb-2">
+          <small class="text-muted" id="round_name_{{slot}}">Раунд не выбран</small>
+        </div>
         <div id="ind_{{slot}}" class="super-ellipse"></div>
         <div class="indicator-container">
           <div id="green_{{slot}}" class="green-indicator"></div>
@@ -132,6 +149,24 @@
       document.getElementById("name_" + slot).textContent = name ? name : "Игрок №" + slot;
     }
     
+    function applyRound() {
+      const roundSelect = document.getElementById("roundSelect");
+      const selectedRound = roundSelect.options[roundSelect.selectedIndex].text;
+      const selectedRoundValue = roundSelect.value;
+      
+      // Update round names for all players
+      ["1", "2", "3"].forEach(slot => {
+        document.getElementById("round_name_" + slot).textContent = selectedRound;
+      });
+      
+      // Optionally, you could emit an event to the server to track which round is currently active
+      socket.emit("round_selected", {
+        code: currentCode,
+        round_number: parseInt(selectedRoundValue),
+        round_name: selectedRound
+      });
+    }
+    
     function adjustScore(slot, operation) {
       const scoreElement = document.getElementById("score_" + slot);
       const scoreInput = document.getElementById("score_input_" + slot);
@@ -149,11 +184,16 @@
       
       scoreElement.value = currentScore;
       
+      // Get the currently selected round
+      const roundSelect = document.getElementById("roundSelect");
+      const selectedRoundValue = roundSelect.value;
+      
       // Отправляем обновление очков через socket.io
       socket.emit("update_player_score", {
         slot: slot,
         points: adjustment,
         operation: operation === 1 ? "add" : "subtract",
+        round: parseInt(selectedRoundValue),  // Send the selected round
         code: currentCode
       });
       
