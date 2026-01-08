@@ -1,2 +1,3 @@
 Nothing should be ignored based on the provided file changes, as they only include source files (.py) and template files (.html).
 game_data.db
+game_data.db-journal
